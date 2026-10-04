@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Volume2, Eye, EyeOff } from "lucide-react";
-import { speak } from "../services/tts";
+import { speak, persianVoiceStatus } from "../services/tts";
 import RatingButtons from "./RatingButtons";
 
 export default function WordCard({ word, onRate, showRating = true }) {
@@ -9,8 +9,11 @@ export default function WordCard({ word, onRate, showRating = true }) {
 
   if (!word) return null;
 
-  const handleListen = (text) => {
-    speak(text);
+  const [faHint, setFaHint] = useState(false);
+
+  const handleListen = (text, lang = "en") => {
+    if (lang === "fa") setFaHint(persianVoiceStatus() === "missing");
+    speak(text, { lang }).catch(() => {});
   };
 
   const handleRate = (rating) => {
@@ -43,9 +46,18 @@ export default function WordCard({ word, onRate, showRating = true }) {
 
       {revealed && (
         <div className="meaning-block animate-in">
-          <div className="meaning-fa">{word.meaning_fa}</div>
+          <div className="meaning-fa">
+            {word.meaning_fa}
+            <button className="icon-btn micro" onClick={() => handleListen(word.meaning_fa, "fa")} aria-label="Listen to Persian meaning" title="Listen to meaning">
+              <Volume2 size={14} />
+            </button>
+          </div>
           {word.meaning_en && <div className="meaning-en">{word.meaning_en}</div>}
         </div>
+      )}
+
+      {faHint && (
+        <p className="muted small">No Persian voice found on this device. Install one in Android Settings → Text-to-speech.</p>
       )}
 
       {revealed && (
@@ -59,11 +71,18 @@ export default function WordCard({ word, onRate, showRating = true }) {
 
       {showExample && (
         <div className="example-block animate-in">
-          <div className="example-en">{word.example}</div>
-          <div className="example-fa">{word.example_fa}</div>
-          <button className="icon-btn small" onClick={() => handleListen(word.example)}>
-            <Volume2 size={16} /> Listen example
-          </button>
+          <div className="example-en">
+            {word.example}
+            <button className="icon-btn micro" onClick={() => handleListen(word.example, "en")} aria-label="Listen to English example" title="English">
+              <Volume2 size={14} />
+            </button>
+          </div>
+          <div className="example-fa">
+            {word.example_fa}
+            <button className="icon-btn micro" onClick={() => handleListen(word.example_fa, "fa")} aria-label="Listen to Persian example" title="Persian">
+              <Volume2 size={14} />
+            </button>
+          </div>
         </div>
       )}
 

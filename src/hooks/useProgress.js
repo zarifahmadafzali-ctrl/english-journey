@@ -1,107 +1,90 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
-import {
-  loadProgress,
-  saveProgress,
-  loadSettings,
-  saveSettings,
-  loadStats,
-  ensureTodayStats,
-  recordNewWordActivity
-} from "../storage/progressStorage";
-import {
-  applyRating,
-  createDefaultProgress,
-  getDueCards,
-  getNewWords,
-  computeStats
-} from "../services/srs";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { loadProgress, saveProgress, loadSettings, saveSettings, loadStats, recordStudyActivity } from "../storage/progressStorage";
+import { applyRating, createDefaultProgress, getDueCards, getNewWords, computeStats } from "../services/srs";
+import { getNewWordsToday, getRemainingNewSlots, getEffectiveStreak, evaluateRating } from "../services/dailyGoal";
+import { localDateStr } from "../utils/helpers";
 import { VOCABULARY } from "../data/vocabulary";
 
 export function useProgress() {
   const [progress, setProgress] = useState(loadProgress);
   const [settings, setSettings] = useState(loadSettings);
-  const [stats, setStats] = useState(() => ensureTodayStats());
+  const [stats, setStats] = useState(loadStats);
+  const [today, setToday] = useState(localDateStr);
 
-  useEffect(() => {
-    saveProgress(progress);
-  }, [progress]);
+  const progressRef = useRef(progress);
+  const statsRef = useRef(stats);
+  const goalRef = useRef(10);
+  progressRef.current = progress;
+  statsRef.current = stats;
 
-  useEffect(() => {
-    saveSettings(settings);
-  }, [settings]);
+  const goal = Math.max(1, Math.min(50, settings.dailyGoal || 10));
+  goalRef.current = goal;
 
-  // Re-check local date on mount / when tab becomes visible
+  useEffect(() => { saveProgress(progress); }, [progress]);
+  useEffect(() => { saveSettings(settings); }, [settings]);
+
+  // Re-evaluate the local date when the app is resumed / left open past midnight
   useEffect(() => {
-    const refresh = () => setStats(ensureTodayStats());
-    refresh();
-    const onVis = () => {
-      if (document.visibilityState === "visible") refresh();
+    const check = () => setToday(prev => (localDateStr() === prev ? prev : localDateStr()));
+    const id = setInterval(check, 60000);
+    document.addEventListener("visibilitychange", check);
+    window.addEventListener("focus", check);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", check);
+      window.removeEventListener("focus", check);
     };
-    document.addEventListener("visibilitychange", onVis);
-    return () => document.removeEventListener("visibilitychange", onVis);
   }, []);
 
-  const rateWord = useCallback((wordId, rating) => {
-    let wasNew = false;
-    setProgress(prev => {
-      const current = prev[wordId];
-      wasNew = !current || current.status === "new";
-      const base = current || createDefaultProgress(wordId);
-      const updated = applyRating(base, rating);
-      return { ...prev, [wordId]: updated };
+  /**
+   * rateWord(wordId, rating, { source }) -> true if applied, false if refused.
+   * source: "learn" | "review" | "quiz". Enforcement lives here (logic), not in the UI.
+   */
+  const rateWord = useCallback((wordId, rating, opts = {}) => {
+    const existing = progressRef.current[wordId];
+    const verdict = evaluateRating({
+      source: opts.source,
+      existing,
+      goal: goalRef.current,
+      stats: statsRef.current,
+      today: localDateStr()
     });
-    // Only count toward Daily Goal when introducing a NEW word
-    if (wasNew) {
-      const newStats = recordNewWordActivity(1);
-      setStats(newStats);
-    } else {
-      // Review / re-rate: refresh stats in case day rolled over
-      setStats(ensureTodayStats());
-    }
+    if (!verdict.allowed) return false;
+
+    const updated = applyRating(existing || createDefaultProgress(wordId), rating);
+    const nextProgress = { ...progressRef.current, [wordId]: updated };
+    progressRef.current = nextProgress;
+    setProgress(nextProgress);
+
+    const nextStats = recordStudyActivity({ isNewWord: verdict.isNewWord });
+    statsRef.current = nextStats;
+    setStats(nextStats);
+    return true;
   }, []);
 
-  const setDailyGoal = useCallback((goal) => {
-    setSettings(s => ({ ...s, dailyGoal: Math.max(1, Math.min(50, goal)) }));
+  const setDailyGoal = useCallback((g) => {
+    setSettings(s => ({ ...s, dailyGoal: Math.max(1, Math.min(50, g)) }));
   }, []);
 
-  const dueWords = useMemo(
-    () => getDueCards(progress, VOCABULARY),
-    [progress]
-  );
+  const doneToday = getNewWordsToday(stats, today);
+  const remaining = getRemainingNewSlots(goal, stats, today);
+  const goalInfo = { goal, doneToday, remaining, completed: remaining <= 0 };
 
-  const dailyGoal = settings.dailyGoal || 10;
-  const completedToday = stats.wordsStudiedToday || 0;
-  const remainingToday = Math.max(0, dailyGoal - completedToday);
-  const goalCompleted = remainingToday <= 0;
-
-  // Enforce Daily Goal limit on NEW words only
-  const allNewWords = useMemo(
-    () => getNewWords(progress, VOCABULARY, 100),
-    [progress]
-  );
-  const newWords = useMemo(
-    () => (goalCompleted ? [] : allNewWords.slice(0, remainingToday)),
-    [allNewWords, goalCompleted, remainingToday]
-  );
-
-  const computed = useMemo(
-    () => computeStats(progress, VOCABULARY),
-    [progress]
-  );
+  const dueWords = getDueCards(progress, VOCABULARY);
+  const newWords = getNewWords(progress, VOCABULARY, remaining);
+  const computed = computeStats(progress, VOCABULARY);
 
   return {
     progress,
     settings,
     stats,
+    streak: getEffectiveStreak(stats, today),
+    goalInfo,
     rateWord,
     setDailyGoal,
     dueWords,
     newWords,
     computedStats: computed,
-    vocabulary: VOCABULARY,
-    dailyGoal,
-    completedToday,
-    remainingToday,
-    goalCompleted
+    vocabulary: VOCABULARY
   };
 }

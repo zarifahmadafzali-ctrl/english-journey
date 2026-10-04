@@ -23,13 +23,16 @@ export function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
-/**
- * Local calendar date key (YYYY-MM-DD) based on device local time.
- * Do NOT use toISOString() for daily goal / streak calendar.
- */
-export function getLocalDateKey(date = new Date()) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+/** Local calendar date (device timezone) as YYYY-MM-DD. NOT UTC. */
+export function localDateStr(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** Previous local calendar date for a "YYYY-MM-DD" string. */
+export function previousLocalDateStr(dateStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return localDateStr(new Date(y, m - 1, d - 1));
 }

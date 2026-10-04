@@ -3,7 +3,7 @@
  * All offline.
  */
 
-import { getLocalDateKey } from "../utils/helpers";
+import { normalizeStats, applyStudyActivity } from "../services/dailyGoal.js";
 
 const PROGRESS_KEY = "ej-progress-v2";
 const SETTINGS_KEY = "ej-settings-v1";
@@ -48,23 +48,9 @@ export function saveSettings(settings) {
 export function loadStats() {
   try {
     const raw = localStorage.getItem(STATS_KEY);
-    return raw
-      ? JSON.parse(raw)
-      : {
-          currentStreak: 0,
-          totalStudyDays: 0,
-          lastStudyDate: null,
-          wordsStudiedToday: 0,
-          studyDate: null
-        };
+    return normalizeStats(raw ? JSON.parse(raw) : null);
   } catch {
-    return {
-      currentStreak: 0,
-      totalStudyDays: 0,
-      lastStudyDate: null,
-      wordsStudiedToday: 0,
-      studyDate: null
-    };
+    return normalizeStats(null);
   }
 }
 
@@ -76,56 +62,9 @@ export function saveStats(stats) {
   }
 }
 
-/**
- * Ensure stats reflect the current local calendar day.
- * Resets wordsStudiedToday when the local date changes.
- */
-export function ensureTodayStats() {
-  const stats = loadStats();
-  const today = getLocalDateKey();
-
-  if (stats.studyDate !== today) {
-    // New local day — reset daily counter; streak handled on activity
-    stats.wordsStudiedToday = 0;
-    stats.studyDate = today;
-    // do not touch lastStudyDate / streak until actual activity
-    saveStats(stats);
-  }
-  return stats;
-}
-
-/**
- * Call this when user learns a NEW word today (not for pure reviews).
- * Handles streak + daily new-word count using local device date.
- */
-export function recordNewWordActivity(count = 1) {
-  const stats = loadStats();
-  const today = getLocalDateKey();
-
-  if (stats.studyDate !== today) {
-    // New local day
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yStr = getLocalDateKey(yesterday);
-
-    if (stats.lastStudyDate === yStr || stats.studyDate === yStr) {
-      stats.currentStreak = (stats.currentStreak || 0) + 1;
-    } else {
-      stats.currentStreak = 1;
-    }
-    stats.totalStudyDays = (stats.totalStudyDays || 0) + 1;
-    stats.wordsStudiedToday = count;
-    stats.studyDate = today;
-    stats.lastStudyDate = today;
-  } else {
-    stats.wordsStudiedToday = (stats.wordsStudiedToday || 0) + count;
-  }
-
-  saveStats(stats);
-  return stats;
-}
-
-/** @deprecated use recordNewWordActivity for daily goal; kept for compatibility */
-export function recordStudyActivity(count = 1) {
-  return recordNewWordActivity(count);
+/** Call once per rated card. isNewWord => counts toward the Daily Goal. */
+export function recordStudyActivity(opts = {}) {
+  const next = applyStudyActivity(loadStats(), opts);
+  saveStats(next);
+  return next;
 }

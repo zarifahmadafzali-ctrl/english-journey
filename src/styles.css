@@ -201,6 +201,15 @@ button {
   font-size: 0.8rem;
 }
 
+.icon-btn.micro {
+  padding: 4px 6px;
+  font-size: 0.7rem;
+  gap: 2px;
+  background: transparent;
+  border: none;
+  color: var(--accent);
+}
+
 /* ---------- Progress bar ---------- */
 .progress-bar-wrap {
   margin-bottom: 10px;
@@ -585,3 +594,6 @@ button {
     border-radius: 0 0 24px 24px;
   }
 }
+
+.goal-done { margin: 8px 0 0; font-weight: 600; color: var(--accent); text-align: center; }
+.primary-btn:disabled { opacity: 0.6; cursor: not-allowed; }

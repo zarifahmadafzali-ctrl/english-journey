@@ -1,45 +1,33 @@
-import React, { useState, useMemo } from "react";
+import React from "react";
 import WordCard from "../components/WordCard";
 
-export default function LearnPage({
-  newWords,
-  progress,
-  rateWord,
-  goalCompleted = false,
-  completedToday = 0,
-  dailyGoal = 10
-}) {
-  const [index, setIndex] = useState(0);
+export default function LearnPage({ newWords, rateWord, goalInfo, dueCount = 0, onNavigate }) {
+  const current = newWords[0]; // list shrinks as words are rated, so always take the first
 
-  const queue = useMemo(() => newWords, [newWords]);
-  const current = queue.length > 0 ? queue[Math.min(index, queue.length - 1)] : null;
-
-  const handleRate = (wordId, rating) => {
-    rateWord(wordId, rating);
-    setIndex(i => i + 1);
-  };
-
-  if (goalCompleted || queue.length === 0) {
+  if (goalInfo.completed) {
     return (
       <section className="page">
         <h1>Learn</h1>
         <div className="empty-state">
-          {goalCompleted ? (
-            <>
-              <p>Daily goal completed 🎉</p>
-              <p className="muted">
-                You learned {completedToday} / {dailyGoal} new words today.
-              </p>
-              <p className="muted" style={{ marginTop: 12 }}>
-                Come back tomorrow for more new words, or go to Review to practice due cards.
-              </p>
-            </>
-          ) : (
-            <>
-              <p>🎉 You've seen all available new words for now.</p>
-              <p className="muted">Go to Review to practice words that are due, or check Progress.</p>
-            </>
-          )}
+          <p>Daily goal completed 🎉</p>
+          <p className="muted">
+            You learned {goalInfo.doneToday} new word{goalInfo.doneToday === 1 ? "" : "s"} today. New words unlock tomorrow.
+          </p>
+          <button className="secondary-btn" onClick={() => onNavigate?.("review")}>
+            Review due ({dueCount})
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  if (!current) {
+    return (
+      <section className="page">
+        <h1>Learn</h1>
+        <div className="empty-state">
+          <p>You have started every available word.</p>
+          <p className="muted">Use Review to practice words that are due.</p>
         </div>
       </section>
     );
@@ -49,11 +37,14 @@ export default function LearnPage({
     <section className="page learn-page">
       <div className="page-header">
         <h1>Learn</h1>
-        <span className="muted">
-          {completedToday} / {dailyGoal} today · {queue.length} left
-        </span>
+        <span className="muted">New word {goalInfo.doneToday + 1} / {goalInfo.goal}</span>
       </div>
-      <WordCard word={current} onRate={handleRate} showRating />
+      <WordCard
+        key={current.id}
+        word={current}
+        onRate={(id, rating) => rateWord(id, rating, { source: "learn" })}
+        showRating
+      />
     </section>
   );
 }

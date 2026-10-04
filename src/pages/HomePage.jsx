@@ -2,9 +2,8 @@ import React from "react";
 import { ChevronRight, Flame, Target } from "lucide-react";
 import ProgressBar from "../components/ProgressBar";
 
-export default function HomePage({ stats, settings, computed, onNavigate, onSetGoal }) {
-  const todayCount = stats.wordsStudiedToday || 0;
-  const goal = settings.dailyGoal || 10;
+export default function HomePage({ streak, goalInfo, computed, onNavigate, onSetGoal }) {
+  const { goal, doneToday, completed } = goalInfo;
 
   return (
     <section className="page home-page">
@@ -17,9 +16,10 @@ export default function HomePage({ stats, settings, computed, onNavigate, onSetG
       <div className="card daily-goal-card">
         <div className="card-header">
           <Target size={20} />
-          <span>Today's Goal</span>
+          <span>Today's Goal (new words)</span>
         </div>
-        <ProgressBar value={todayCount} max={goal} />
+        <ProgressBar value={Math.min(doneToday, goal)} max={goal} />
+        {completed && <p className="goal-done">Daily goal completed 🎉</p>}
         <div className="goal-controls">
           <button className="ghost-btn" onClick={() => onSetGoal(goal - 1)} disabled={goal <= 1}>−</button>
           <span className="goal-value">{goal} words</span>
@@ -28,8 +28,8 @@ export default function HomePage({ stats, settings, computed, onNavigate, onSetG
       </div>
 
       <div className="quick-actions">
-        <button className="primary-btn" onClick={() => onNavigate("learn")}>
-          Start Learning <ChevronRight size={18} />
+        <button className="primary-btn" onClick={() => onNavigate("learn")} disabled={completed}>
+          {completed ? "Daily goal completed 🎉" : <>Start Learning <ChevronRight size={18} /></>}
         </button>
         <button className="secondary-btn" onClick={() => onNavigate("review")}>
           Review due ({computed.wordsDueToday})
@@ -46,7 +46,7 @@ export default function HomePage({ stats, settings, computed, onNavigate, onSetG
           <span>Due today</span>
         </div>
         <div className="stat-item">
-          <b>{stats.currentStreak || 0}</b>
+          <b>{streak}</b>
           <span><Flame size={14} className="inline-icon" /> Streak</span>
         </div>
       </div>

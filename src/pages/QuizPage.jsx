@@ -7,9 +7,9 @@ function makeQuestion(word, allWords, type) {
   if (type === 1) {
     // English → Persian meaning
     const correct = word.meaning_fa;
-    const distractors = shuffle(
-      allWords.filter(w => w.id !== word.id).map(w => w.meaning_fa)
-    ).slice(0, 3);
+    const pool = allWords.filter(w => w.id !== word.id).map(w => w.meaning_fa).filter(x => x !== correct);
+    const unique = [...new Set(pool)]; // deduplicate
+    const distractors = shuffle(unique).slice(0, 3);
     const options = shuffle([correct, ...distractors]);
     return {
       type: 1,
@@ -22,9 +22,9 @@ function makeQuestion(word, allWords, type) {
   if (type === 2) {
     // Persian → English word
     const correct = word.word;
-    const distractors = shuffle(
-      allWords.filter(w => w.id !== word.id).map(w => w.word)
-    ).slice(0, 3);
+    const pool = allWords.filter(w => w.id !== word.id).map(w => w.word).filter(x => x !== correct);
+    const unique = [...new Set(pool)]; // deduplicate
+    const distractors = shuffle(unique).slice(0, 3);
     const options = shuffle([correct, ...distractors]);
     return {
       type: 2,
@@ -35,11 +35,11 @@ function makeQuestion(word, allWords, type) {
     };
   }
   // type 3 – fill the blank (simple: replace the word in example)
-  const blank = word.example.replace(new RegExp(word.word, "i"), "______");
+  const blank = word.example.replace(new RegExp(word.word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), "______");
   const correct = word.word;
-  const distractors = shuffle(
-    allWords.filter(w => w.id !== word.id).map(w => w.word)
-  ).slice(0, 3);
+  const pool = allWords.filter(w => w.id !== word.id).map(w => w.word).filter(x => x !== correct);
+  const unique = [...new Set(pool)]; // deduplicate
+  const distractors = shuffle(unique).slice(0, 3);
   const options = shuffle([correct, ...distractors]);
   return {
     type: 3,
@@ -77,9 +77,9 @@ export default function QuizPage({ vocabulary, rateWord }) {
     if (isCorrect) {
       setScore(s => s + 1);
       // mild positive rating
-      rateWord(current.word.id, "good");
+      rateWord(current.word.id, "good", { source: "quiz" });
     } else {
-      rateWord(current.word.id, "again");
+      rateWord(current.word.id, "again", { source: "quiz" });
     }
   };
 

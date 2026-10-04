@@ -1,12 +1,12 @@
 import React from "react";
 import { Flame, BookOpen, CheckCircle, Target, Calendar, Percent } from "lucide-react";
 
-export default function ProgressPage({ computed, stats }) {
+export default function ProgressPage({ computed, stats, streak }) {
   const items = [
     { icon: BookOpen, label: "Words learned", value: computed.wordsLearned },
     { icon: CheckCircle, label: "Words mastered", value: computed.wordsMastered },
     { icon: Target, label: "Words due today", value: computed.wordsDueToday },
-    { icon: Flame, label: "Current streak", value: `${stats.currentStreak || 0} days` },
+    { icon: Flame, label: "Current streak", value: `${streak ?? 0} days` },
     { icon: Calendar, label: "Total study days", value: stats.totalStudyDays || 0 },
     { icon: Percent, label: "Accuracy", value: `${computed.accuracy}%` }
   ];

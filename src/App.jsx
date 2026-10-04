@@ -14,16 +14,14 @@ export default function App() {
     progress,
     settings,
     stats,
+    streak,
+    goalInfo,
     rateWord,
     setDailyGoal,
     dueWords,
     newWords,
     computedStats,
-    vocabulary,
-    dailyGoal,
-    completedToday,
-    remainingToday,
-    goalCompleted
+    vocabulary
   } = useProgress();
 
   useEffect(() => {
@@ -36,11 +34,10 @@ export default function App() {
       content = (
         <LearnPage
           newWords={newWords}
-          progress={progress}
           rateWord={rateWord}
-          goalCompleted={goalCompleted}
-          completedToday={completedToday}
-          dailyGoal={dailyGoal}
+          goalInfo={goalInfo}
+          dueCount={dueWords.length}
+          onNavigate={setTab}
         />
       );
       break;
@@ -56,14 +53,14 @@ export default function App() {
       break;
     case "progress":
       content = (
-        <ProgressPage computed={computedStats} stats={stats} />
+        <ProgressPage computed={computedStats} stats={stats} streak={streak} />
       );
       break;
     default:
       content = (
         <HomePage
-          stats={stats}
-          settings={settings}
+          streak={streak}
+          goalInfo={goalInfo}
           computed={computedStats}
           onNavigate={setTab}
           onSetGoal={setDailyGoal}

@@ -3,8 +3,7 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  // Relative base works for Capacitor Android and for GitHub Pages
-  base: "./",
+  base: "./", // relative: works in Capacitor (APK) and on GitHub Pages
   build: {
     outDir: "dist",
     sourcemap: false
