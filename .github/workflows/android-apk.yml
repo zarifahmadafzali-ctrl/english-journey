@@ -22,7 +22,10 @@ jobs:
           distribution: temurin
           java-version: 21
 
+      # Do not install obsolete 'tools' package (default of this action; fails on current SDK)
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools platforms;android-35 build-tools;35.0.0
 
       # package-lock.json must include @capacitor/android; fall back to install if it is stale
       - name: Install dependencies
