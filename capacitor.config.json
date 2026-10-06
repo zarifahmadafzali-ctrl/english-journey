@@ -1,5 +1,13 @@
 {
   "appId": "com.englishjourney.app",
   "appName": "English Journey",
-  "webDir": "dist"
+  "webDir": "dist",
+  "plugins": {
+    "CapacitorUpdater": {
+      "autoUpdate": false,
+      "appReadyTimeout": 10000,
+      "responseTimeout": 20,
+      "resetWhenUpdate": true
+    }
+  }
 }

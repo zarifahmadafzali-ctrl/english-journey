@@ -1,0 +1,16 @@
+{
+  "appId": "com.englishjourney.app",
+  "updatedAt": "2026-10-06T11:29:14.695Z",
+  "channels": {
+    "production": {
+      "version": "0.2.0",
+      "url": "https://zarifahmadafzali-ctrl.github.io/english-journey/ota/bundles/0.2.0.zip",
+      "notes": "OTA system baseline"
+    },
+    "beta": {
+      "version": "0.2.0",
+      "url": "https://zarifahmadafzali-ctrl.github.io/english-journey/ota/bundles/0.2.0.zip",
+      "notes": "OTA system baseline (beta)"
+    }
+  }
+}

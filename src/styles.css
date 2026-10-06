@@ -597,3 +597,28 @@ button {
 
 .goal-done { margin: 8px 0 0; font-weight: 600; color: var(--accent); text-align: center; }
 .primary-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* OTA update panel */
+.ota-card {
+  margin-top: 1.25rem;
+}
+.ota-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.05rem;
+  margin: 0 0 0.5rem;
+}
+.ota-channels {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+  flex-wrap: wrap;
+}
+.ota-check {
+  width: 100%;
+}
+.ota-msg {
+  margin-top: 0.75rem;
+  color: var(--text-muted, #a0a0a0);
+}

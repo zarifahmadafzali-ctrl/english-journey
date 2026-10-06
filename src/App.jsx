@@ -7,6 +7,7 @@ import ProgressPage from "./pages/ProgressPage";
 import QuizPage from "./pages/QuizPage";
 import { useProgress } from "./hooks/useProgress";
 import { initTTS } from "./services/tts";
+import { notifyOtaReady, silentOtaCheck } from "./services/otaUpdate";
 
 export default function App() {
   const [tab, setTab] = useState("home");
@@ -26,6 +27,10 @@ export default function App() {
 
   useEffect(() => {
     initTTS();
+    notifyOtaReady().then(() => {
+      // Non-blocking; only fetches a small web zip when a new version is published
+      silentOtaCheck();
+    });
   }, []);
 
   let content;
