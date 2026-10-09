@@ -14,19 +14,38 @@ export async function nativeSpeak(text, lang = "en-US", speed = 1.0) {
   if (!isNativeTtsPlatform()) {
     throw new Error("NativeTts only available on Android");
   }
-  await NativeTts.speak({ text, lang, speed });
+  return NativeTts.speak({ text, lang, speed });
 }
 
 export async function nativeStop() {
   if (!isNativeTtsPlatform()) return;
-  await NativeTts.stop();
+  try {
+    await NativeTts.stop();
+  } catch {
+    /* ignore */
+  }
 }
 
 export async function nativeIsReady() {
   if (!isNativeTtsPlatform()) {
-    return { ready: false, error: "not-android" };
+    return { ready: false, assetsOk: false, error: "not-android" };
   }
-  return NativeTts.isReady();
+  try {
+    return await NativeTts.isReady();
+  } catch (e) {
+    return { ready: false, assetsOk: false, error: String(e && e.message ? e.message : e) };
+  }
+}
+
+export async function nativeWarmUp() {
+  if (!isNativeTtsPlatform()) {
+    return { ready: false };
+  }
+  try {
+    return await NativeTts.warmUp();
+  } catch (e) {
+    return { ready: false, error: String(e && e.message ? e.message : e) };
+  }
 }
 
 export { NativeTts };

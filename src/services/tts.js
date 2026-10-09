@@ -1,31 +1,38 @@
 /**
  * Text-to-Speech service.
- * Android APK: Sherpa-ONNX offline neural TTS (NativeTts plugin).
- * Browser/PWA: Web Speech API fallback only.
+ * Android APK: try Sherpa-ONNX native TTS; on any failure fall back to Web Speech API.
+ * Browser/PWA: Web Speech API only.
  */
 
-import { isNativeTtsPlatform, nativeSpeak, nativeStop, nativeIsReady } from "../plugins/nativeTts.js";
+import {
+  isNativeTtsPlatform,
+  nativeSpeak,
+  nativeStop,
+  nativeIsReady
+} from "../plugins/nativeTts.js";
 
 let preferredVoiceEN = null;
 let preferredVoiceFA = null;
 let nativeReadyCached = null;
+/** Once native fails hard, prefer Web Speech for the rest of the session. */
+let nativeDisabled = false;
 
 function pickEnglishVoice() {
   if (!("speechSynthesis" in window)) return null;
   const voices = speechSynthesis.getVoices();
-  const preferred = voices.find(v => v.lang.startsWith("en-US") && v.name.includes("Google"))
-    || voices.find(v => v.lang.startsWith("en-US"))
-    || voices.find(v => v.lang.startsWith("en-GB"))
-    || voices.find(v => v.lang.startsWith("en"));
-  return preferred || null;
+  return (
+    voices.find((v) => v.lang.startsWith("en-US") && v.name.includes("Google")) ||
+    voices.find((v) => v.lang.startsWith("en-US")) ||
+    voices.find((v) => v.lang.startsWith("en-GB")) ||
+    voices.find((v) => v.lang.startsWith("en")) ||
+    null
+  );
 }
 
 function pickPersianVoice() {
   if (!("speechSynthesis" in window)) return null;
   const voices = speechSynthesis.getVoices();
-  // Persian voices only. No Arabic fallback: it mispronounces Persian letters (پ چ ژ گ).
-  const preferred = voices.find(v => v.lang.replace("_", "-").toLowerCase().startsWith("fa"));
-  return preferred || null;
+  return voices.find((v) => v.lang.replace("_", "-").toLowerCase().startsWith("fa")) || null;
 }
 
 function mapLang(lang) {
@@ -40,23 +47,7 @@ function mapLang(lang) {
   return l.startsWith("fa") ? "fa-IR" : "en-US";
 }
 
-export function initTTS() {
-  if (isNativeTtsPlatform()) {
-    nativeIsReady()
-      .then((r) => {
-        nativeReadyCached = r;
-        if (r && r.ready) {
-          console.info("[TTS] Native Sherpa-ONNX ready");
-        } else {
-          console.warn("[TTS] Native TTS not ready:", r && r.error);
-        }
-      })
-      .catch((e) => {
-        console.warn("[TTS] Native init check failed", e);
-      });
-    return;
-  }
-
+function initWebVoices() {
   if (!("speechSynthesis" in window)) return;
   if (speechSynthesis.getVoices().length) {
     preferredVoiceEN = pickEnglishVoice();
@@ -69,10 +60,58 @@ export function initTTS() {
   }
 }
 
+export function initTTS() {
+  initWebVoices();
+
+  if (!isNativeTtsPlatform()) {
+    return;
+  }
+
+  nativeIsReady()
+    .then((r) => {
+      nativeReadyCached = r;
+      if (r && r.assetsOk === false) {
+        nativeDisabled = true;
+        console.warn("[TTS] Native assets missing — using Web Speech only:", r.error);
+      } else if (r && r.ready) {
+        console.info("[TTS] Native Sherpa-ONNX ready");
+      } else {
+        console.info("[TTS] Native not loaded yet (will try on first speak, else Web Speech)");
+      }
+    })
+    .catch((e) => {
+      nativeDisabled = true;
+      console.warn("[TTS] Native init check failed — Web Speech fallback", e);
+    });
+}
+
+function speakWeb(text, lang, options = {}) {
+  if (!("speechSynthesis" in window)) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    try {
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = lang === "fa-IR" ? "fa-IR" : "en-US";
+      u.rate = options.rate ?? (lang === "fa-IR" ? 0.85 : 0.92);
+      u.pitch = options.pitch ?? 1;
+      u.volume = options.volume ?? 1;
+      if (lang === "fa-IR" && preferredVoiceFA) u.voice = preferredVoiceFA;
+      else if (preferredVoiceEN) u.voice = preferredVoiceEN;
+      u.onend = () => resolve();
+      u.onerror = () => resolve();
+      speechSynthesis.speak(u);
+    } catch {
+      resolve();
+    }
+  });
+}
+
 /**
  * Speak text in English or Persian.
  * @param {string} text
- * @param {object} options - { lang: 'en' | 'fa' | 'en-US' | 'fa-IR', rate, speed }
+ * @param {object} options - { lang, rate, speed }
  */
 export function speak(text, options = {}) {
   if (!text) return Promise.resolve();
@@ -80,57 +119,55 @@ export function speak(text, options = {}) {
   const lang = mapLang(options.lang || "en");
   const speed = options.speed ?? options.rate ?? 1.0;
 
-  if (isNativeTtsPlatform()) {
-    return nativeSpeak(text, lang, speed).catch((e) => {
-      console.error("[TTS] native speak failed", e);
-    });
+  if (isNativeTtsPlatform() && !nativeDisabled) {
+    return nativeSpeak(text, lang, speed)
+      .then(() => {
+        // mark ready after successful queue (engine may still load async)
+        if (!nativeReadyCached || !nativeReadyCached.ready) {
+          nativeIsReady().then((r) => {
+            nativeReadyCached = r;
+          }).catch(() => {});
+        }
+      })
+      .catch((e) => {
+        console.warn("[TTS] native speak failed — falling back to Web Speech", e);
+        nativeDisabled = true;
+        return speakWeb(text, lang, options);
+      });
   }
 
-  if (!("speechSynthesis" in window)) return Promise.resolve();
-
-  return new Promise((resolve) => {
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = lang === "fa-IR" ? "fa-IR" : "en-US";
-    u.rate = options.rate ?? (lang === "fa-IR" ? 0.85 : 0.92);
-    u.pitch = options.pitch ?? 1;
-    u.volume = options.volume ?? 1;
-
-    if (lang === "fa-IR") {
-      if (preferredVoiceFA) u.voice = preferredVoiceFA;
-    } else if (preferredVoiceEN) {
-      u.voice = preferredVoiceEN;
-    }
-
-    u.onend = () => resolve();
-    u.onerror = () => resolve();
-    speechSynthesis.speak(u);
-  });
+  return speakWeb(text, lang, options);
 }
 
 export function stopSpeaking() {
   if (isNativeTtsPlatform()) {
-    return nativeStop().catch(() => {});
+    nativeStop().catch(() => {});
   }
-  if ("speechSynthesis" in window) speechSynthesis.cancel();
+  if ("speechSynthesis" in window) {
+    try {
+      speechSynthesis.cancel();
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 /** 'available' | 'missing' | 'unknown' */
 export function persianVoiceStatus() {
-  if (isNativeTtsPlatform()) {
+  if (isNativeTtsPlatform() && !nativeDisabled) {
     if (nativeReadyCached && nativeReadyCached.ready) return "available";
-    if (nativeReadyCached && nativeReadyCached.ready === false) return "missing";
+    if (nativeReadyCached && nativeReadyCached.assetsOk === false) return "missing";
     return "unknown";
   }
   if (!("speechSynthesis" in window)) return "missing";
   const voices = speechSynthesis.getVoices();
   if (!voices.length) return "unknown";
-  return voices.some(v => v.lang.replace("_", "-").toLowerCase().startsWith("fa")) ? "available" : "missing";
+  return voices.some((v) => v.lang.replace("_", "-").toLowerCase().startsWith("fa"))
+    ? "available"
+    : "missing";
 }
 
 export function isTTSAvailable() {
-  if (isNativeTtsPlatform()) {
-    return true;
-  }
+  if (isNativeTtsPlatform()) return true;
   return "speechSynthesis" in window;
 }
