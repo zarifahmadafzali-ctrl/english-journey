@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Native offline neural TTS via Sherpa-ONNX + Piper VITS.
- * Completely independent of system/Google TTS and Web Speech.
+ * Engines are loaded lazily (one language at a time) to avoid OOM on mid-range phones.
  */
 public final class TtsController {
     private static final String TAG = "EjNativeTts";
@@ -35,14 +35,13 @@ public final class TtsController {
 
     private final Context appContext;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
-    private final AtomicBoolean ready = new AtomicBoolean(false);
     private final AtomicBoolean stopped = new AtomicBoolean(true);
     private final AtomicInteger generation = new AtomicInteger(0);
 
     private OfflineTts enTts;
     private OfflineTts faTts;
     private AudioTrack audioTrack;
-    private String initError = null;
+    private String lastError = null;
 
     private TtsController(Context context) {
         this.appContext = context.getApplicationContext();
@@ -55,22 +54,38 @@ public final class TtsController {
         return instance;
     }
 
-    public synchronized void initIfNeeded() {
-        if (ready.get() || initError != null && enTts != null) {
-            return;
-        }
+    /** Do not load models at startup — only when a language is first needed. */
+    public synchronized OfflineTts ensureEngine(boolean persian) {
         try {
-            AssetManager am = appContext.getAssets();
-            enTts = createEngine(am, EN_MODEL, EN_TOKENS);
-            faTts = createEngine(am, FA_MODEL, FA_TOKENS);
-            ready.set(true);
-            initError = null;
-            Log.i(TAG, "Sherpa-ONNX TTS ready (en_US-amy-medium + fa_IR-gyro-medium)");
+            if (persian) {
+                if (faTts == null) {
+                    Log.i(TAG, "Lazy-loading Persian TTS model…");
+                    faTts = createEngine(appContext.getAssets(), FA_MODEL, FA_TOKENS);
+                    Log.i(TAG, "Persian TTS ready");
+                }
+                return faTts;
+            } else {
+                if (enTts == null) {
+                    Log.i(TAG, "Lazy-loading English TTS model…");
+                    enTts = createEngine(appContext.getAssets(), EN_MODEL, EN_TOKENS);
+                    Log.i(TAG, "English TTS ready");
+                }
+                return enTts;
+            }
         } catch (Throwable t) {
-            initError = t.getMessage() != null ? t.getMessage() : t.toString();
-            Log.e(TAG, "TTS init failed: " + initError, t);
-            ready.set(false);
+            lastError = t.getMessage() != null ? t.getMessage() : t.toString();
+            Log.e(TAG, "ensureEngine failed: " + lastError, t);
+            return null;
         }
+    }
+
+    /** Lightweight readiness: true if at least one engine can be attempted (assets present). */
+    public boolean isReady() {
+        return enTts != null || faTts != null || lastError == null;
+    }
+
+    public String getInitError() {
+        return lastError;
     }
 
     private OfflineTts createEngine(AssetManager am, String model, String tokens) {
@@ -86,7 +101,7 @@ public final class TtsController {
 
         OfflineTtsModelConfig modelConfig = new OfflineTtsModelConfig();
         modelConfig.setVits(vits);
-        modelConfig.setNumThreads(2);
+        modelConfig.setNumThreads(1);
         modelConfig.setDebug(false);
         modelConfig.setProvider("cpu");
 
@@ -100,37 +115,27 @@ public final class TtsController {
         return new OfflineTts(am, config);
     }
 
-    public boolean isReady() {
-        return ready.get();
-    }
-
-    public String getInitError() {
-        return initError;
-    }
-
     public void speak(String text, String lang, float speed) {
         if (text == null || text.trim().isEmpty()) {
             return;
         }
         final String normalizedLang = normalizeLang(lang);
-        final float spd = speed <= 0 ? 1.0f : speed;
+        final boolean persian = isPersian(normalizedLang);
+        final float spd = speed <= 0 ? 1.0f : Math.min(speed, 2.0f);
         final int gen = generation.incrementAndGet();
         stopped.set(false);
 
         executor.execute(() -> {
             try {
-                initIfNeeded();
-                if (!ready.get()) {
-                    Log.e(TAG, "speak aborted: not ready (" + initError + ")");
-                    return;
-                }
                 if (gen != generation.get() || stopped.get()) {
                     return;
                 }
-
-                OfflineTts engine = isPersian(normalizedLang) ? faTts : enTts;
+                OfflineTts engine = ensureEngine(persian);
                 if (engine == null) {
-                    Log.e(TAG, "No engine for lang=" + normalizedLang);
+                    Log.e(TAG, "speak aborted: engine null (" + lastError + ")");
+                    return;
+                }
+                if (gen != generation.get() || stopped.get()) {
                     return;
                 }
 
@@ -144,8 +149,15 @@ public final class TtsController {
                     return;
                 }
                 playPcm(audio.getSamples(), audio.getSampleRate(), gen);
+            } catch (UnsatisfiedLinkError e) {
+                lastError = "Native library missing: " + e.getMessage();
+                Log.e(TAG, lastError, e);
+            } catch (OutOfMemoryError e) {
+                lastError = "Out of memory loading TTS";
+                Log.e(TAG, lastError, e);
             } catch (Throwable t) {
-                Log.e(TAG, "speak failed: " + t.getMessage(), t);
+                lastError = t.getMessage() != null ? t.getMessage() : t.toString();
+                Log.e(TAG, "speak failed: " + lastError, t);
             }
         });
     }
@@ -188,7 +200,7 @@ public final class TtsController {
                 AudioFormat.CHANNEL_OUT_MONO,
                 AudioFormat.ENCODING_PCM_16BIT
         );
-        int bufSize = Math.max(minBuf, pcm.length * 2);
+        int bufSize = Math.max(minBuf, 4096);
 
         AudioTrack track;
         synchronized (this) {
@@ -199,20 +211,20 @@ public final class TtsController {
                 }
                 audioTrack = null;
             }
-            track = new AudioTrack(
-                    new AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
+            track = new AudioTrack.Builder()
+                    .setAudioAttributes(new AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
                             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                            .build(),
-                    new AudioFormat.Builder()
+                            .build())
+                    .setAudioFormat(new AudioFormat.Builder()
                             .setSampleRate(sampleRate)
                             .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                             .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                            .build(),
-                    bufSize,
-                    AudioTrack.MODE_STREAM,
-                    AudioManager.AUDIO_SESSION_ID_GENERATE
-            );
+                            .build())
+                    .setBufferSizeInBytes(bufSize)
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .setSessionId(AudioManager.AUDIO_SESSION_ID_GENERATE)
+                    .build();
             audioTrack = track;
         }
 
@@ -229,10 +241,9 @@ public final class TtsController {
                 }
                 offset += written;
             }
-            // brief wait for buffer drain
             if (gen == generation.get() && !stopped.get()) {
                 try {
-                    Thread.sleep(50);
+                    Thread.sleep(30);
                 } catch (InterruptedException ignored) {
                 }
             }
@@ -283,7 +294,6 @@ public final class TtsController {
             } catch (Throwable t) {
                 Log.w(TAG, "release: " + t.getMessage());
             }
-            ready.set(false);
         });
     }
 }

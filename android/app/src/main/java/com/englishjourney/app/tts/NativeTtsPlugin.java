@@ -15,15 +15,9 @@ public class NativeTtsPlugin extends Plugin {
 
     @Override
     public void load() {
+        // Only construct controller — do NOT load ONNX models here (prevents startup OOM/crash).
         controller = TtsController.getInstance(getContext());
-        // Warm-init off the UI thread
-        new Thread(() -> {
-            try {
-                controller.initIfNeeded();
-            } catch (Throwable t) {
-                Log.e(TAG, "background init failed", t);
-            }
-        }, "ej-tts-init").start();
+        Log.i(TAG, "NativeTts plugin loaded (models lazy)");
     }
 
     @PluginMethod
@@ -56,20 +50,14 @@ public class NativeTtsPlugin extends Plugin {
 
     @PluginMethod
     public void isReady(PluginCall call) {
-        try {
-            controller.initIfNeeded();
-            JSObject ret = new JSObject();
-            ret.put("ready", controller.isReady());
-            String err = controller.getInitError();
-            if (err != null) {
-                ret.put("error", err);
-            }
-            call.resolve(ret);
-        } catch (Throwable t) {
-            JSObject ret = new JSObject();
+        JSObject ret = new JSObject();
+        // Models load on first speak; report available plugin as ready for UI.
+        ret.put("ready", true);
+        String err = controller != null ? controller.getInitError() : null;
+        if (err != null) {
+            ret.put("error", err);
             ret.put("ready", false);
-            ret.put("error", t.getMessage());
-            call.resolve(ret);
         }
+        call.resolve(ret);
     }
 }

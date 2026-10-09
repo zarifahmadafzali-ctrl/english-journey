@@ -7,7 +7,7 @@ import ProgressPage from "./pages/ProgressPage";
 import QuizPage from "./pages/QuizPage";
 import { useProgress } from "./hooks/useProgress";
 import { initTTS } from "./services/tts";
-import { notifyOtaReady, silentOtaCheck } from "./services/otaUpdate";
+import { notifyOtaReady } from "./services/otaUpdate";
 
 export default function App() {
   const [tab, setTab] = useState("home");
@@ -26,11 +26,13 @@ export default function App() {
   } = useProgress();
 
   useEffect(() => {
-    initTTS();
-    notifyOtaReady().then(() => {
-      // Non-blocking; only fetches a small web zip when a new version is published
-      silentOtaCheck();
-    });
+    // Lightweight only — never load TTS models or auto-apply OTA on cold start.
+    try {
+      initTTS();
+    } catch (e) {
+      console.warn("[App] initTTS", e);
+    }
+    notifyOtaReady().catch(() => {});
   }, []);
 
   let content;
