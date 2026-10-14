@@ -1,6 +1,6 @@
 /**
  * Text-to-Speech service.
- * Android APK: try Sherpa-ONNX native TTS; on any failure fall back to Web Speech API.
+ * Android APK: use Sherpa-ONNX native TTS exclusively (bundled models).
  * Browser/PWA: Web Speech API only.
  */
 
@@ -8,14 +8,17 @@ import {
   isNativeTtsPlatform,
   nativeSpeak,
   nativeStop,
-  nativeIsReady
+  nativeIsReady,
+  nativeWarmUp,
 } from "../plugins/nativeTts.js";
 
 let preferredVoiceEN = null;
 let preferredVoiceFA = null;
 let nativeReadyCached = null;
-/** Once native fails hard, prefer Web Speech for the rest of the session. */
-let nativeDisabled = false;
+/** One-time initialization state for native engine. */
+let nativeInitState = "uninitialized"; // 'uninitialized'|'initializing'|'ready'|'failed'
+let nativeInitPromise = null;
+let nativeInitError = null;
 
 function pickEnglishVoice() {
   if (!("speechSynthesis" in window)) return null;
@@ -61,27 +64,33 @@ function initWebVoices() {
 }
 
 export function initTTS() {
+  // Initialize web voices for browser/PWA use only.
   initWebVoices();
 
-  if (!isNativeTtsPlatform()) {
-    return;
-  }
+  // Probe native readiness lazily; do not treat unknown as ready.
+  if (!isNativeTtsPlatform()) return;
 
   nativeIsReady()
     .then((r) => {
       nativeReadyCached = r;
       if (r && r.assetsOk === false) {
-        nativeDisabled = true;
-        console.warn("[TTS] Native assets missing — using Web Speech only:", r.error);
+        // assets missing — mark failed so UI can surface.
+        nativeInitState = "failed";
+        nativeInitError = r.error || "native assets missing";
+        console.warn("[TTS] Native assets missing — mark failed:", nativeInitError);
       } else if (r && r.ready) {
+        nativeInitState = "ready";
         console.info("[TTS] Native Sherpa-ONNX ready");
       } else {
-        console.info("[TTS] Native not loaded yet (will try on first speak, else Web Speech)");
+        // Not ready yet — remain uninitialized; explicit warmUp will be required.
+        nativeInitState = "uninitialized";
+        console.info("[TTS] Native probe returned not-ready; warmUp required before speak");
       }
     })
     .catch((e) => {
-      nativeDisabled = true;
-      console.warn("[TTS] Native init check failed — Web Speech fallback", e);
+      nativeInitState = "failed";
+      nativeInitError = String(e && e.message ? e.message : e) || "native probe failed";
+      console.warn("[TTS] Native init probe failed — mark failed", nativeInitError);
     });
 }
 
@@ -102,16 +111,81 @@ function speakWeb(text, lang, options = {}) {
       u.onend = () => resolve();
       u.onerror = () => resolve();
       speechSynthesis.speak(u);
-    } catch {
+    } catch (err) {
+      console.warn("[TTS] speakWeb failed", err);
       resolve();
     }
   });
 }
 
+/** Ensure native engine is initialized exactly once and provide state. */
+export function initNativeEngineOnce() {
+  if (!isNativeTtsPlatform()) {
+    return Promise.reject(new Error("not-native-platform"));
+  }
+  if (nativeInitState === "ready") return Promise.resolve({ ready: true });
+  if (nativeInitState === "failed") return Promise.reject(new Error(nativeInitError || "native init failed"));
+  if (nativeInitState === "initializing") return nativeInitPromise;
+
+  // Start initializing
+  nativeInitState = "initializing";
+  nativeInitPromise = new Promise(async (resolve, reject) => {
+    try {
+      // First quick probe
+      let probe = null;
+      try {
+        probe = await nativeIsReady();
+      } catch (e) {
+        // probe failed — continue to warmUp which will provide more info
+        probe = null;
+      }
+      nativeReadyCached = probe;
+      if (probe && probe.ready) {
+        nativeInitState = "ready";
+        nativeInitError = null;
+        resolve({ ready: true });
+        return;
+      }
+
+      // Not ready -> attempt a controlled warmUp which copies assets and loads the English engine.
+      // WarmUp runs native prepareFiles + ensureEngine(false) and returns {ready,assetsOk,error}
+      let warm = null;
+      try {
+        warm = await nativeWarmUp();
+      } catch (e) {
+        warm = { ready: false, assetsOk: false, error: String(e && e.message ? e.message : e) };
+      }
+      nativeReadyCached = warm;
+      if (warm && warm.ready) {
+        nativeInitState = "ready";
+        nativeInitError = null;
+        resolve({ ready: true });
+        return;
+      }
+
+      // warmUp did not succeed — mark failed and return diagnostic
+      nativeInitState = "failed";
+      nativeInitError = (warm && (warm.error || (warm.assetsOk === false ? "assets missing" : null))) || "warmUp failed";
+      console.error("[TTS] native warmUp failed:", nativeInitError);
+      reject(new Error(nativeInitError));
+    } catch (t) {
+      nativeInitState = "failed";
+      nativeInitError = String(t && t.message ? t.message : t) || "native init exception";
+      console.error("[TTS] native init exception:", nativeInitError, t);
+      reject(new Error(nativeInitError));
+    }
+  });
+  return nativeInitPromise;
+}
+
 /**
  * Speak text in English or Persian.
- * @param {string} text
- * @param {object} options - { lang, rate, speed }
+ * On Android native platforms we MUST use the bundled native TTS. We will not
+ * transparently fall back to Web Speech on Android. If native engine is not
+ * ready or initialization fails, speak() returns a rejected Promise with a
+ * diagnostic error. Caller (UI) must handle and optionally disable speaker UI.
+ *
+ * In browser/PWA builds, we use Web Speech API.
  */
 export function speak(text, options = {}) {
   if (!text) return Promise.resolve();
@@ -119,29 +193,38 @@ export function speak(text, options = {}) {
   const lang = mapLang(options.lang || "en");
   const speed = options.speed ?? options.rate ?? 1.0;
 
-  if (isNativeTtsPlatform() && !nativeDisabled) {
-    return nativeSpeak(text, lang, speed)
+  if (isNativeTtsPlatform()) {
+    // Ensure native engine initialized once. If initializing, wait for completion.
+    return initNativeEngineOnce()
       .then(() => {
-        // mark ready after successful queue (engine may still load async)
-        if (!nativeReadyCached || !nativeReadyCached.ready) {
-          nativeIsReady().then((r) => {
-            nativeReadyCached = r;
-          }).catch(() => {});
+        // double-check ready
+        if (nativeInitState !== "ready") {
+          return Promise.reject(new Error(nativeInitError || "native not ready"));
         }
+        // Call nativeSpeak and propagate any errors to caller. If nativeSpeak rejects
+        // we mark nativeInitState=failed to prevent repeated attempts.
+        return nativeSpeak(text, lang, speed).catch((e) => {
+          nativeInitState = "failed";
+          nativeInitError = String(e && e.message ? e.message : e) || "nativeSpeak failed";
+          console.error("[TTS] nativeSpeak error — marking failed:", nativeInitError, e);
+          return Promise.reject(new Error(nativeInitError));
+        });
       })
-      .catch((e) => {
-        console.warn("[TTS] native speak failed — falling back to Web Speech", e);
-        nativeDisabled = true;
-        return speakWeb(text, lang, options);
+      .catch((err) => {
+        // Initialization failed — return clear JS error. Do NOT fall back to Web Speech on Android.
+        const msg = err && err.message ? err.message : String(err);
+        console.error("[TTS] speak blocked — native engine unavailable:", msg);
+        return Promise.reject(new Error("Native TTS unavailable: " + msg));
       });
   }
 
+  // Browser / PWA path: Web Speech OK
   return speakWeb(text, lang, options);
 }
 
 export function stopSpeaking() {
   if (isNativeTtsPlatform()) {
-    nativeStop().catch(() => {});
+    nativeStop().catch((e) => console.warn("[TTS] nativeStop failed", e));
   }
   if ("speechSynthesis" in window) {
     try {
@@ -154,9 +237,9 @@ export function stopSpeaking() {
 
 /** 'available' | 'missing' | 'unknown' */
 export function persianVoiceStatus() {
-  if (isNativeTtsPlatform() && !nativeDisabled) {
-    if (nativeReadyCached && nativeReadyCached.ready) return "available";
-    if (nativeReadyCached && nativeReadyCached.assetsOk === false) return "missing";
+  if (isNativeTtsPlatform()) {
+    if (nativeInitState === "ready") return "available";
+    if (nativeInitState === "failed") return "missing";
     return "unknown";
   }
   if (!("speechSynthesis" in window)) return "missing";
@@ -168,6 +251,6 @@ export function persianVoiceStatus() {
 }
 
 export function isTTSAvailable() {
-  if (isNativeTtsPlatform()) return true;
+  if (isNativeTtsPlatform()) return nativeInitState === "ready";
   return "speechSynthesis" in window;
 }
